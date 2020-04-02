@@ -46,6 +46,10 @@ def create_base(repos, module_platform_id, persistdir, cachedir, arch):
     base.conf.substitutions['arch'] = arch
     base.conf.substitutions['basearch'] = dnf.rpm.basearch(arch)
 
+# XXX - BCL
+#    base.conf.metadata_expire = 0
+#    base.conf.metadata_expire_filter = "never"
+
     for repo in repos:
         base.repos.add(dnfrepo(repo, base.conf))
 
@@ -117,6 +121,8 @@ with tempfile.TemporaryDirectory() as persistdir:
         }, sys.stdout)
 
     elif command == "depsolve":
+# XXX - BCL
+##        base.update_cache()
         errors = []
 
         try:
