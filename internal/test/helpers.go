@@ -10,7 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
-	"path"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -185,19 +185,59 @@ func SetUpTemporaryRepository() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.Command("createrepo_c", path.Join(dir))
-	err = cmd.Start()
-	if err != nil {
-		return "", err
-	}
-	err = cmd.Wait()
-	if err != nil {
+	if err := RunCreateRepo(dir); err != nil {
 		return "", err
 	}
 	return dir, nil
 }
 
+// RunCreateRepo runs createrepo_c on the specified directory
+func RunCreateRepo(dir string) error {
+	cmd := exec.Command("createrepo_c", dir)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	if err := cmd.Wait(); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Remove the temporary repository
 func TearDownTemporaryRepository(dir string) error {
 	return os.RemoveAll(dir)
+}
+
+// BackDateFiles will set the mtime and atime of the files in a directory tree to the past
+func BackdateDirTree(dir string, dt time.Duration) error {
+	t := time.Now().Add(dt)
+	return filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+
+		// Only change regular files
+		if err := os.Chtimes(path, t, t); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+// MakeFakeRPM creates a fake rpm in a specified directory and updates the repodata
+// This uses the ./tools/fake-rpm helper to create the rpm
+func MakeFakeRPM(dir, name, version, release string) error {
+
+	// XXX Is this the right path to use?
+	cmd := exec.Command("./tools/fake-rpm", "--dir", dir, name, version, release)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	if err := cmd.Wait(); err != nil {
+		return err
+	}
+	return RunCreateRepo(dir)
 }

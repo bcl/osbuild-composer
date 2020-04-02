@@ -6,18 +6,21 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
+	"os"
+	"path"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/osbuild/osbuild-composer/internal/distro"
 	"github.com/osbuild/osbuild-composer/internal/distro/fedora30"
 	"github.com/osbuild/osbuild-composer/internal/distro/fedora31"
 	"github.com/osbuild/osbuild-composer/internal/distro/fedora32"
 	"github.com/osbuild/osbuild-composer/internal/rpmmd"
 	"github.com/osbuild/osbuild-composer/internal/test"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"io/ioutil"
-	"os"
-	"path"
-	"testing"
 )
 
 func TestFetchChecksum(t *testing.T) {
@@ -84,4 +87,71 @@ func TestCrossArchDepsolve(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestRepoMetadataExpire tests that updates to a repository will be properly depsolved
+// It uses a temporary repository and a couple of fake rpm files by setting the timestamp
+// to 72 hours in the past and then adding a new rpm and updating the repodata
+func TestRepoMetadataExpire(t *testing.T) {
+	var reply struct {
+		Checksums    map[string]string   `json:"checksums"`
+		Dependencies []rpmmd.PackageSpec `json:"dependencies"`
+	}
+
+	dir, err := test.SetUpTemporaryRepository()
+	require.NoError(t, err, "Failed to set up temporary repository")
+	defer func(dir string) {
+		err := test.TearDownTemporaryRepository(dir)
+		require.NoError(t, err, "Failed to clean up temporary repository.")
+	}(dir)
+
+	// Make a fake rpm file in the repo (this also runs createrepo)
+	err = test.MakeFakeRPM(dir, "oldmeta", "1.0.0", "1")
+	require.NoError(t, err, "Failed to create fake rpm")
+
+	// Cache directory for dnf
+	cacheDir, err := ioutil.TempDir("/tmp", "osbuild-composer-test-")
+	require.NoError(t, err, "Failed to create temporary cache dir")
+	defer func(dir string) {
+		err := os.RemoveAll(dir)
+		require.NoError(t, err, "Failed to clean up temporary repository.")
+	}(cacheDir)
+
+	// Construct RepoConfig to point to it
+	repo := rpmmd.RepoConfig{"mdexpire", "file://" + dir, "", "", "", true}
+	var arguments = struct {
+		PackageSpecs     []string           `json:"package-specs"`
+		ExcludSpecs      []string           `json:"exclude-specs"`
+		Repos            []rpmmd.RepoConfig `json:"repos"`
+		CacheDir         string             `json:"cachedir"`
+		ModulePlatformID string             `json:"module_platform_id"`
+		Arch             string             `json:"arch"`
+	}{[]string{"oldmeta"}, nil, []rpmmd.RepoConfig{repo}, cacheDir, "platform:f31", "x86_64"}
+
+	// Depsolve the package and check the results
+	err = rpmmd.RunDNFTestOnly("depsolve", arguments, &reply)
+	//	reply.Dependencies, reply.Checksums, err
+	require.NoError(t, err, "Failed to depsolve the 1st time")
+	require.Equal(t, len(reply.Dependencies), 1)
+	require.Equal(t, "oldmeta", reply.Dependencies[0].Name)
+	require.Equal(t, "1.0.0", reply.Dependencies[0].Version)
+	require.Equal(t, "1", reply.Dependencies[0].Release)
+
+	// Set the timestamp on all of the cache files back 72 hours
+	dt, _ := time.ParseDuration("-72h")
+	err = test.BackdateDirTree(cacheDir, dt)
+	require.NoError(t, err, "Failed to turn back time")
+
+	// Add a new version of the fake package
+	err = test.MakeFakeRPM(dir, "oldmeta", "2.0.0", "1")
+	require.NoError(t, err, "Failed to create fake rpm")
+
+	// depsolve it again and check for the new package and a checksum change
+	err = rpmmd.RunDNFTestOnly("depsolve", arguments, &reply)
+	//	reply.Dependencies, reply.Checksums, err
+	require.NoError(t, err, "Failed to depsolve the 2nd time")
+	require.Equal(t, len(reply.Dependencies), 1)
+	require.Equal(t, "oldmeta", reply.Dependencies[0].Name)
+	require.Equal(t, "2.0.0", reply.Dependencies[0].Version)
+	require.Equal(t, "1", reply.Dependencies[0].Release)
 }

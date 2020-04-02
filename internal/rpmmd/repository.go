@@ -152,6 +152,11 @@ func LoadRepositories(confPaths []string, distro string) (map[string][]RepoConfi
 	return repos, nil
 }
 
+// XXX - Not sure yet if exporting is right way to do this
+func RunDNFTestOnly(command string, arguments interface{}, result interface{}) error {
+	return runDNF(command, arguments, result)
+}
+
 func runDNF(command string, arguments interface{}, result interface{}) error {
 	var call = struct {
 		Command   string      `json:"command"`
