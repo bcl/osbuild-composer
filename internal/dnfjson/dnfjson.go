@@ -111,6 +111,10 @@ func NewSolver(modulePlatformID string, releaseVer string, arch string, cacheDir
 	return s.NewWithConfig(modulePlatformID, releaseVer, arch)
 }
 
+func (s *Solver) CacheDebugInfo() map[string]string {
+	return s.BaseSolver.resultCache.Info()
+}
+
 // Depsolve the list of required package sets with explicit excludes using
 // their associated repositories.  Each package set is depsolved as a separate
 // transactions in a chain.  It returns a list of all packages (with solved

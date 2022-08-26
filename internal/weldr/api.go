@@ -25,6 +25,8 @@ import (
 	"strings"
 	"time"
 
+	_ "net/http/pprof" //nolint:gosec
+
 	"github.com/BurntSushi/toml"
 	"github.com/gobwas/glob"
 	"github.com/google/uuid"
@@ -201,6 +203,12 @@ func New(repoPaths []string, stateDir string, solver *dnfjson.BaseSolver, dr *di
 		distros:                  validDistros(rr, dr, archName, logger),
 		distrosImageTypeDenylist: distrosImageTypeDenylist,
 	}
+
+	// XXX BCL
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6060", nil))
+	}()
+
 	return setupRouter(api), nil
 }
 
@@ -212,6 +220,7 @@ func setupRouter(api *API) *API {
 	api.router.NotFound = http.HandlerFunc(notFoundHandler)
 
 	api.router.GET("/api/status", api.statusHandler)
+	api.router.GET("/api/debug", api.debugHandler)
 	api.router.GET("/api/v:version/projects/source/list", api.sourceListHandler)
 	api.router.GET("/api/v:version/projects/source/info/", api.sourceEmptyInfoHandler)
 	api.router.GET("/api/v:version/projects/source/info/:sources", api.sourceInfoHandler)
@@ -608,6 +617,34 @@ func (api *API) statusHandler(writer http.ResponseWriter, request *http.Request,
 		Build:         common.BuildVersion(),
 		Messages:      make([]string, 0),
 	})
+	common.PanicOnError(err)
+}
+
+func (api *API) debugHandler(writer http.ResponseWriter, request *http.Request, _ httprouter.Params) {
+
+	distroName, err := api.parseDistro(request.URL.Query())
+	if err != nil {
+		errors := responseError{
+			ID:  "DistroError",
+			Msg: err.Error(),
+		}
+		statusResponseError(writer, http.StatusBadRequest, errors)
+		return
+	}
+
+	d := api.getDistro(distroName)
+	if d == nil {
+		errors := responseError{
+			ID:  "DistroError",
+			Msg: fmt.Sprintf("GetDistro - unknown distribution: %s", distroName),
+		}
+		statusResponseError(writer, http.StatusBadRequest, errors)
+		return
+	}
+
+	solver := api.solver.NewWithConfig(d.ModulePlatformID(), d.Releasever(), api.archName)
+	info := solver.CacheDebugInfo()
+	err = json.NewEncoder(writer).Encode(info)
 	common.PanicOnError(err)
 }
 

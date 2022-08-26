@@ -1,6 +1,8 @@
 package dnfjson
 
 import (
+	"bytes"
+	"encoding/gob"
 	"fmt"
 	"io/fs"
 	"os"
@@ -213,8 +215,8 @@ func dirSize(path string) (uint64, error) {
 // dnfResults holds the results of a dnfjson request
 // expire is the time the request was made, used to expire the entry
 type dnfResults struct {
-	expire time.Time
-	pkgs   rpmmd.PackageList
+	Expire time.Time
+	Pkgs   rpmmd.PackageList
 }
 
 // dnfCache is a cache of results from dnf-json requests
@@ -241,7 +243,7 @@ func (d *dnfCache) CleanCache() {
 
 	// Delete expired resultCache entries
 	for k := range d.results {
-		if time.Since(d.results[k].expire) > d.timeout {
+		if time.Since(d.results[k].Expire) > d.timeout {
 			delete(d.results, k)
 		}
 	}
@@ -254,15 +256,32 @@ func (d *dnfCache) Get(hash string) (rpmmd.PackageList, bool) {
 	defer d.RUnlock()
 
 	result, ok := d.results[hash]
-	if !ok || time.Since(result.expire) >= d.timeout {
+	if !ok || time.Since(result.Expire) >= d.timeout {
 		return rpmmd.PackageList{}, false
 	}
-	return result.pkgs, true
+	return result.Pkgs, true
 }
 
 // Store saves the package list in the cache
 func (d *dnfCache) Store(hash string, pkgs rpmmd.PackageList) {
 	d.Lock()
 	defer d.Unlock()
-	d.results[hash] = dnfResults{expire: time.Now(), pkgs: pkgs}
+	d.results[hash] = dnfResults{Expire: time.Now(), Pkgs: pkgs}
+}
+
+// Info returns about about the cache
+func (d *dnfCache) Info() map[string]string {
+
+	m := make(map[string]string)
+	m["timeout"] = fmt.Sprintf("%d", d.timeout)
+	m["entries"] = fmt.Sprintf("%d", len(d.results))
+
+	// Try to guesstimate the amount of memory used by marshaling the cache into a byte stream
+	b := new(bytes.Buffer)
+	if err := gob.NewEncoder(b).Encode(d.results); err != nil {
+		m["error"] = err.Error()
+	} else {
+		m["size"] = fmt.Sprintf("%d", b.Len())
+	}
+	return m
 }
